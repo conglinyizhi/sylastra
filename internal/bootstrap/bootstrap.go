@@ -36,10 +36,15 @@ type Result struct {
 }
 
 func ApplyFirstRun(ctx context.Context, paths config.Paths, raw string) (*Result, error) {
+	return ApplyFirstRunWithProgress(ctx, paths, raw, nil)
+}
+
+func ApplyFirstRunWithProgress(ctx context.Context, paths config.Paths, raw string, report func(string)) (*Result, error) {
 	fields := splitAndClean(raw)
 	if len(fields) < 2 {
 		return nil, fmt.Errorf("usage: --first-run \"<api_key>,<model_name>[,<base_url>]\"")
 	}
+	reportProgress(report, "Parsing --first-run input...")
 	detected := detectFields(fields)
 	if detected.APIKey == "" {
 		return nil, errors.New("could not identify an API key in --first-run input")
@@ -52,9 +57,12 @@ func ApplyFirstRun(ctx context.Context, paths config.Paths, raw string) (*Result
 	if err := profile.Validate(); err != nil {
 		return nil, err
 	}
-	if err := probeProfile(ctx, profile); err != nil {
+	reportProgress(report, fmt.Sprintf("Prepared profile %q (%s).", profile.Name, profile.APIStyle))
+	reportProgress(report, fmt.Sprintf("Probing API endpoint from %s ...", profile.BaseURL))
+	if err := probeProfile(ctx, profile, report); err != nil {
 		return nil, err
 	}
+	reportProgress(report, "Connection probe succeeded. Writing config files...")
 
 	result := &Result{
 		Mode:       ModeFirstRun,
@@ -64,6 +72,7 @@ func ApplyFirstRun(ctx context.Context, paths config.Paths, raw string) (*Result
 	if err := persist(paths, result); err != nil {
 		return nil, err
 	}
+	reportProgress(report, fmt.Sprintf("Bootstrap finished. Active profile: %s", result.Profile.Name))
 	return result, nil
 }
 
@@ -195,21 +204,29 @@ func persist(paths config.Paths, result *Result) error {
 	return config.WriteAppFile(paths.App, appCfg)
 }
 
-func probeProfile(ctx context.Context, profile config.LLMProfile) error {
+func probeProfile(ctx context.Context, profile config.LLMProfile, report func(string)) error {
 	apiKey, err := profile.ResolvedAPIKey()
 	if err != nil {
 		return err
 	}
 	candidates := probeCandidates(profile)
 	var failures []string
-	for _, candidate := range candidates {
+	for idx, candidate := range candidates {
+		reportProgress(report, fmt.Sprintf("Probe %d/%d: %s", idx+1, len(candidates), candidate.Endpoint))
 		err := executeProbeCandidate(ctx, profile, apiKey, candidate)
 		if err == nil {
+			reportProgress(report, fmt.Sprintf("Probe matched: %s", candidate.Endpoint))
 			return nil
 		}
 		failures = append(failures, fmt.Sprintf("%s %s: %v", candidate.Label, candidate.Endpoint, err))
 	}
 	return fmt.Errorf("connection test failed across %d probe candidates:\n- %s", len(failures), strings.Join(failures, "\n- "))
+}
+
+func reportProgress(report func(string), message string) {
+	if report != nil && strings.TrimSpace(message) != "" {
+		report(message)
+	}
 }
 
 type probeCandidate struct {

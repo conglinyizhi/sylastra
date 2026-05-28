@@ -88,6 +88,47 @@ func TestApplyFirstRunThirdPartyBaseURLFallback(t *testing.T) {
 	}
 }
 
+func TestApplyFirstRunReportsProgress(t *testing.T) {
+	var progress []string
+	oldClient := probeHTTPClient
+	probeHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	defer func() { probeHTTPClient = oldClient }()
+
+	dir := t.TempDir()
+	paths, err := config.ResolvePaths(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ApplyFirstRunWithProgress(context.Background(), paths, "sk-test-123456789012345678901234567890,gpt-4o,https://example.test/v1", func(message string) {
+		progress = append(progress, message)
+	})
+	if err != nil {
+		t.Fatalf("ApplyFirstRunWithProgress() error = %v", err)
+	}
+	if len(progress) == 0 {
+		t.Fatal("expected progress messages")
+	}
+	joined := strings.Join(progress, "\n")
+	for _, expected := range []string{
+		"Parsing --first-run input...",
+		`Prepared profile "gpt-4o"`,
+		"Probing API endpoint from https://example.test/v1 ...",
+		"Probe 1/",
+		"Connection probe succeeded. Writing config files...",
+		"Bootstrap finished. Active profile: gpt-4o",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("expected progress to contain %q, got %s", expected, joined)
+		}
+	}
+}
+
 func TestApplyFastRunCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
