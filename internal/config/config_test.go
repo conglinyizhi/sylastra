@@ -26,6 +26,9 @@ timeout = 30
 [mcp]
 command = "better-edit-tools"
 args = ["--lang", "zh"]
+
+[mcp.fallback]
+enabled = true
 `)
 
 	loaded, err := Load(dir)

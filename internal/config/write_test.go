@@ -62,7 +62,39 @@ func TestWriteRoundTrip(t *testing.T) {
 	if loaded.App.Bootstrap.ReplacedAll != true {
 		t.Fatalf("bootstrap replaced_all = %v", loaded.App.Bootstrap.ReplacedAll)
 	}
+	if loaded.App.MCP.Fallback.Enabled != true {
+		t.Fatalf("fallback enabled = %v", loaded.App.MCP.Fallback.Enabled)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "llms.toml")); err != nil {
 		t.Fatalf("llms.toml missing: %v", err)
+	}
+}
+
+func TestResolveMCPCommandFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	fallbackPath, err := DefaultFallbackMCPPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fallbackPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fallbackPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := ResolvePaths(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := ResolveMCPCommand(paths, MCPConfig{
+		Fallback: MCPFallbackConfig{Enabled: true},
+	})
+	if resolved.Source != "fallback" {
+		t.Fatalf("resolved source = %q", resolved.Source)
+	}
+	if resolved.Command != fallbackPath {
+		t.Fatalf("resolved command = %q", resolved.Command)
 	}
 }

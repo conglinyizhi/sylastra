@@ -13,6 +13,9 @@ func DefaultAppConfig() AppConfig {
 		MCP: MCPConfig{
 			Command: "better-edit-tools",
 			Args:    []string{"--lang", "zh"},
+			Fallback: MCPFallbackConfig{
+				Enabled: true,
+			},
 		},
 	}
 }
@@ -95,9 +98,14 @@ type appConfigWrite struct {
 }
 
 type mcpConfigWrite struct {
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env,omitempty"`
+	Command  string                 `toml:"command"`
+	Args     []string               `toml:"args"`
+	Env      map[string]string      `toml:"env,omitempty"`
+	Fallback mcpFallbackConfigWrite `toml:"fallback,omitempty"`
+}
+
+type mcpFallbackConfigWrite struct {
+	Enabled bool `toml:"enabled,omitempty"`
 }
 
 type uiConfigWrite struct {
@@ -134,6 +142,9 @@ func toAppConfigWrite(cfg AppConfig) appConfigWrite {
 			Command: cfg.MCP.Command,
 			Args:    cfg.MCP.Args,
 			Env:     cfg.MCP.Env,
+			Fallback: mcpFallbackConfigWrite{
+				Enabled: cfg.MCP.Fallback.Enabled,
+			},
 		},
 		UI: uiConfigWrite{
 			Theme: cfg.UI.Theme,

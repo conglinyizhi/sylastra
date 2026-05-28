@@ -2,10 +2,15 @@ name: Build Binary
 
 on:
   workflow_dispatch:
+    inputs:
+      better_edit_tools_version:
+        description: better-edit-tools release tag, for example v0.4.0 or latest
+        required: false
+        default: latest
 
 jobs:
   build:
-    name: Build sylastra binary
+    name: Build sylastra artifacts
     runs-on: ubuntu-latest
 
     steps:
@@ -27,12 +32,46 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          mkdir -p dist
-          go build -buildvcs=false -o dist/sylastra-linux-amd64 ./cmd/sylastra
+          mkdir -p dist/plain dist/bundle
+          go build -buildvcs=false -o dist/plain/sylastra-linux-amd64 ./cmd/sylastra
+          cp dist/plain/sylastra-linux-amd64 dist/bundle/sylastra
 
-      - name: Upload artifact
+      - name: Resolve better-edit-tools download URL
+        id: better_edit_tools
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.better_edit_tools_version }}
+        run: |
+          if [ -z "$REQUESTED_VERSION" ] || [ "$REQUESTED_VERSION" = "latest" ]; then
+            TAG="$(gh release view -R conglinyizhi/better-edit-tools-mcp --json tagName --jq .tagName)"
+          else
+            TAG="$REQUESTED_VERSION"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "archive=better-edit-tools-linux-amd64.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/conglinyizhi/better-edit-tools-mcp/releases/download/${TAG}/better-edit-tools-linux-amd64.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Download bundled MCP binary
+        run: |
+          mkdir -p dist/download dist/bundle/mcp/bin
+          curl -fsSL "${{ steps.better_edit_tools.outputs.url }}" -o dist/download/${{ steps.better_edit_tools.outputs.archive }}
+          tar -xzf dist/download/${{ steps.better_edit_tools.outputs.archive }} -C dist/bundle/mcp/bin
+          chmod +x dist/bundle/mcp/bin/better-edit-tools
+
+      - name: Create bundle archive
+        run: |
+          mkdir -p dist/release
+          tar -czf dist/release/sylastra-linux-amd64-bundle.tar.gz -C dist/bundle .
+
+      - name: Upload plain artifact
         uses: actions/upload-artifact@v4
         with:
           name: sylastra-linux-amd64
-          path: dist/sylastra-linux-amd64
+          path: dist/plain/sylastra-linux-amd64
+          if-no-files-found: error
+
+      - name: Upload bundled artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sylastra-linux-amd64-bundle
+          path: dist/release/sylastra-linux-amd64-bundle.tar.gz
           if-no-files-found: error

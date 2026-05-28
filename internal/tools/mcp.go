@@ -74,7 +74,11 @@ type callToolResult struct {
 }
 
 func NewStdioBridge(ctx context.Context, cfg config.MCPConfig) (*StdioBridge, error) {
-	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	command := cfg.Command
+	if strings.TrimSpace(cfg.Resolved.Command) != "" {
+		command = cfg.Resolved.Command
+	}
+	cmd := exec.CommandContext(ctx, command, cfg.Args...)
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), flattenEnv(cfg.Env)...)
 	}

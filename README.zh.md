@@ -40,9 +40,18 @@ go build -buildvcs=false ./cmd/sylastra
 [mcp]
 command = "better-edit-tools"
 args = ["--lang", "zh"]
+
+[mcp.fallback]
+enabled = true
 ```
 
-你需要自己把二进制安装到 `PATH`，或者手动把 `command` 改成绝对路径。
+MCP 命令解析顺序是：
+
+1. `app.toml` 里的 `mcp.command`
+2. fallback 开启时的 `~/.local/sylastra/mcp/bin/better-edit-tools`
+3. `PATH` 里的 `better-edit-tools`
+
+你可以把二进制安装到 `PATH`，放到 `~/.local/sylastra/mcp/bin/`，或者手动把 `command` 改成绝对路径。
 
 校验配置：
 
@@ -102,6 +111,9 @@ active = "example-openai"
 [mcp]
 command = "better-edit-tools"
 args = ["--lang", "zh"]
+
+[mcp.fallback]
+enabled = true
 ```
 
 如果二进制不在 `PATH` 里，就改成绝对路径。
@@ -121,10 +133,12 @@ args = ["--lang", "zh"]
 ## 说明
 
 - `config init` 默认只写一次，想覆盖可加 `--force`。
+- GitHub Actions 手动构建会同时产出纯净二进制 artifact 和一个已经包含 `mcp/bin/better-edit-tools` 的 bundle artifact。
 - `--first-run` 可以用一段紧凑输入直接写出可用的 Sylastra 配置，并把初始化元信息保存到 `app.toml`。
 - `--first-run` 默认通过 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 这类环境变量名引用密钥，不会把密钥明文写进 `llms.toml`。
 - `--fast-run` 可以从 `codex`、`claude`、`opencode`、`kimi` 导入配置，并写入 Sylastra 自己的配置文件。
 - `--fast-run` 和 `--first-run` 当前都会替换现有的 `profiles` 列表与 active profile。
+- 如果你不想使用 `~/.local/sylastra/mcp/bin/` 这条 fallback 路径，可以把 `[mcp.fallback].enabled = false`。
 - Sylastra 不会自动下载 MCP 二进制，安装动作保持显式，失败原因也更清楚。
 - 当前 TUI 只有一个内存会话，不做持久化。
 - Prompt 文件嵌入自 `prompts/zh/`。

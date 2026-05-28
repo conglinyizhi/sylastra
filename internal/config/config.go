@@ -46,9 +46,20 @@ type LLMIndexConfig struct {
 }
 
 type MCPConfig struct {
-	Command string            `mapstructure:"command"`
-	Args    []string          `mapstructure:"args"`
-	Env     map[string]string `mapstructure:"env"`
+	Command  string            `mapstructure:"command"`
+	Args     []string          `mapstructure:"args"`
+	Env      map[string]string `mapstructure:"env"`
+	Fallback MCPFallbackConfig `mapstructure:"fallback"`
+	Resolved MCPResolvedConfig `mapstructure:"-"`
+}
+
+type MCPFallbackConfig struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
+type MCPResolvedConfig struct {
+	Command string
+	Source  string
 }
 
 type UIConfig struct {
@@ -123,6 +134,7 @@ func Load(dir string) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
+	appCfg.MCP.Resolved = ResolveMCPCommand(paths, appCfg.MCP)
 
 	active, err := SelectActiveProfile(profiles, index.Active)
 	if err != nil {
@@ -193,13 +205,54 @@ func ValidateProfiles(profiles []LLMProfile) error {
 }
 
 func ValidateAppConfig(cfg AppConfig) error {
-	if strings.TrimSpace(cfg.MCP.Command) == "" {
-		return errors.New("app.toml: mcp.command is required")
-	}
-	if _, err := exec.LookPath(cfg.MCP.Command); err != nil {
-		return fmt.Errorf("app.toml: mcp.command %q not found in PATH; install the MCP binary or set an absolute path", cfg.MCP.Command)
+	if strings.TrimSpace(cfg.MCP.Resolved.Command) == "" {
+		return errors.New("app.toml: no MCP command resolved; set mcp.command, install better-edit-tools into PATH, or place it under ~/.local/sylastra/mcp/bin/")
 	}
 	return nil
+}
+
+func ResolveMCPCommand(paths Paths, cfg MCPConfig) MCPResolvedConfig {
+	if strings.TrimSpace(cfg.Command) != "" {
+		if resolved, err := lookPathOrExact(cfg.Command); err == nil {
+			return MCPResolvedConfig{Command: resolved, Source: "config"}
+		}
+	}
+
+	if cfg.Fallback.Enabled {
+		if local, err := DefaultFallbackMCPPath(); err == nil {
+			if info, statErr := os.Stat(local); statErr == nil && !info.IsDir() {
+				return MCPResolvedConfig{Command: local, Source: "fallback"}
+			}
+		}
+	}
+
+	if resolved, err := exec.LookPath("better-edit-tools"); err == nil {
+		return MCPResolvedConfig{Command: resolved, Source: "path"}
+	}
+
+	return MCPResolvedConfig{}
+}
+
+func DefaultFallbackMCPPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "sylastra", "mcp", "bin", "better-edit-tools"), nil
+}
+
+func lookPathOrExact(command string) (string, error) {
+	if filepath.IsAbs(command) {
+		info, err := os.Stat(command)
+		if err != nil {
+			return "", err
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("%s is a directory", command)
+		}
+		return command, nil
+	}
+	return exec.LookPath(command)
 }
 
 func SelectActiveProfile(profiles []LLMProfile, active string) (LLMProfile, error) {
