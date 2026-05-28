@@ -17,6 +17,7 @@ type EventType string
 
 const (
 	EventTextDelta EventType = "text_delta"
+	EventStatus    EventType = "status"
 	EventToolStart EventType = "tool_start"
 	EventToolEnd   EventType = "tool_end"
 	EventError     EventType = "error"
@@ -26,6 +27,7 @@ const (
 type Event struct {
 	Type       EventType
 	Text       string
+	Status     string
 	ToolName   string
 	ToolInput  string
 	ToolOutput string
@@ -71,11 +73,13 @@ func (r *Runtime) RunTurn(ctx context.Context, session *Session, input string, s
 
 	for round := 0; round < 8; round++ {
 		msgs := r.buildMessages(session)
+		sink.Emit(Event{Type: EventStatus, Status: fmt.Sprintf("requesting model (round %d)", round+1)})
 		stream, err := boundModel.Stream(ctx, msgs)
 		if err != nil {
 			sink.Emit(Event{Type: EventError, Err: err})
 			return err
 		}
+		sink.Emit(Event{Type: EventStatus, Status: fmt.Sprintf("streaming response (round %d)", round+1)})
 
 		var chunks []*schema.Message
 		for {
@@ -109,6 +113,7 @@ func (r *Runtime) RunTurn(ctx context.Context, session *Session, input string, s
 
 		session.History = append(session.History, assistantMsg)
 		if len(assistantMsg.ToolCalls) == 0 {
+			sink.Emit(Event{Type: EventStatus, Status: "response complete"})
 			sink.Emit(Event{Type: EventDone, Text: assistantMsg.Content})
 			return nil
 		}

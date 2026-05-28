@@ -22,6 +22,7 @@ const (
 	blockUser  blockKind = "user"
 	blockAI    blockKind = "ai"
 	blockTools blockKind = "tools"
+	blockError blockKind = "error"
 )
 
 type block struct {
@@ -43,6 +44,7 @@ type Model struct {
 	events   chan tea.Msg
 	busy     bool
 	status   string
+	liveInfo string
 	aiIndex  int
 	toolOpen bool
 
@@ -55,6 +57,8 @@ type styles struct {
 	userBox     lipgloss.Style
 	aiLabel     lipgloss.Style
 	toolsLabel  lipgloss.Style
+	errorLabel  lipgloss.Style
+	body        lipgloss.Style
 	meta        lipgloss.Style
 	inputBox    lipgloss.Style
 	status      lipgloss.Style
@@ -81,13 +85,14 @@ func New(runtime Runtime) Model {
 	input.Prompt = ""
 
 	return Model{
-		runtime: runtime,
-		session: &agent.Session{},
-		input:   input,
-		content: viewport.New(0, 0),
-		events:  make(chan tea.Msg, 128),
-		status:  "Ready",
-		aiIndex: -1,
+		runtime:  runtime,
+		session:  &agent.Session{},
+		input:    input,
+		content:  viewport.New(0, 0),
+		events:   make(chan tea.Msg, 128),
+		status:   "Ready",
+		liveInfo: "idle",
+		aiIndex:  -1,
 		styles: styles{
 			container: lipgloss.NewStyle().Padding(0, 1),
 			userLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")),
@@ -97,7 +102,9 @@ func New(runtime Runtime) Model {
 				Padding(0, 1),
 			aiLabel:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")),
 			toolsLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")),
-			meta:       lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
+			errorLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")),
+			body:       lipgloss.NewStyle().PaddingLeft(2),
+			meta:       lipgloss.NewStyle().Foreground(lipgloss.Color("243")).PaddingLeft(2),
 			inputBox: lipgloss.NewStyle().
 				Background(lipgloss.Color("237")).
 				Foreground(lipgloss.Color("255")).
@@ -161,14 +168,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	input := m.styles.inputBox.Width(max(20, m.width-2)).Render(m.input.View())
+	info := m.styles.meta.Render("AI-Status: " + m.liveInfo)
 	status := m.styles.status.Render("Status: " + m.status + "  |  Enter submit  |  Ctrl+C quit")
-	return lipgloss.JoinVertical(lipgloss.Left, m.styles.container.Render(m.content.View()), input, status)
+	return lipgloss.JoinVertical(lipgloss.Left, m.styles.container.Render(m.content.View()), info, input, status)
 }
 
 func (m Model) runTurn(text string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.runtime.RunTurn(context.Background(), m.session, text, sink{ch: m.events})
-		return turnFinishedMsg{err: err}
+		m.events <- turnFinishedMsg{err: err}
+		return nil
 	}
 }
 
@@ -193,23 +202,29 @@ func (m *Model) startTurn(text string) {
 	m.toolOpen = false
 	m.busy = true
 	m.status = "Streaming"
+	m.liveInfo = "queued request"
 	m.refreshView()
 }
 
 func (m *Model) handleEvent(event agent.Event) {
 	switch event.Type {
+	case agent.EventStatus:
+		m.liveInfo = strings.TrimSpace(event.Status)
 	case agent.EventTextDelta:
 		m.appendAssistantDelta(event.Text)
 	case agent.EventToolStart:
 		m.status = "Running tools"
+		m.liveInfo = "running tool " + event.ToolName
 		m.appendToolLine("calling " + event.ToolName + formatInlineSuffix(event.ToolInput))
 	case agent.EventToolEnd:
 		line := "finished " + event.ToolName
 		if event.Err != nil {
 			line += " error=" + event.Err.Error()
 			m.status = "Error"
+			m.liveInfo = "tool failed: " + event.ToolName
 		} else {
 			m.status = "Streaming"
+			m.liveInfo = "tool finished: " + event.ToolName
 		}
 		if output := strings.TrimSpace(event.ToolOutput); output != "" {
 			line += " output=" + output
@@ -217,9 +232,11 @@ func (m *Model) handleEvent(event agent.Event) {
 		m.appendToolLine(line)
 	case agent.EventError:
 		m.status = "Error"
-		m.appendToolLine("error: " + event.Err.Error())
+		m.liveInfo = "model request failed"
+		m.blocks = append(m.blocks, block{kind: blockError, text: event.Err.Error()})
 	case agent.EventDone:
 		m.status = "Done"
+		m.liveInfo = "response complete"
 	}
 }
 
@@ -239,7 +256,7 @@ func (m *Model) refreshView() {
 			}
 			lines = append(lines,
 				m.styles.aiLabel.Render("AI:"),
-				body,
+				m.styles.body.Render(body),
 			)
 			if strings.TrimSpace(item.meta) != "" {
 				lines = append(lines, m.styles.meta.Render(item.meta))
@@ -247,7 +264,12 @@ func (m *Model) refreshView() {
 		case blockTools:
 			lines = append(lines,
 				m.styles.toolsLabel.Render("AI-Tools:"),
-				item.text,
+				m.styles.body.Render(item.text),
+			)
+		case blockError:
+			lines = append(lines,
+				m.styles.errorLabel.Render("AI-Error:"),
+				m.styles.body.Render(item.text),
 			)
 		}
 		lines = append(lines, "")
