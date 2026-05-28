@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -11,11 +10,24 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/conglinyizhi/sylastra/internal/agent"
-	"github.com/conglinyizhi/sylastra/internal/appmeta"
 )
 
 type Runtime interface {
 	RunTurn(context.Context, *agent.Session, string, agent.Sink) error
+}
+
+type blockKind string
+
+const (
+	blockUser  blockKind = "user"
+	blockAI    blockKind = "ai"
+	blockTools blockKind = "tools"
+)
+
+type block struct {
+	kind blockKind
+	text string
+	meta string
 }
 
 type Model struct {
@@ -25,24 +37,28 @@ type Model struct {
 	width  int
 	height int
 
-	input      textinput.Model
-	chat       viewport.Model
-	logs       viewport.Model
-	transcript []string
-	logLines   []string
-
-	busy   bool
-	status string
-	events chan tea.Msg
+	input    textinput.Model
+	content  viewport.Model
+	blocks   []block
+	events   chan tea.Msg
+	busy     bool
+	status   string
+	aiIndex  int
+	toolOpen bool
 
 	styles styles
 }
 
 type styles struct {
-	header lipgloss.Style
-	panel  lipgloss.Style
-	input  lipgloss.Style
-	status lipgloss.Style
+	container   lipgloss.Style
+	userLabel   lipgloss.Style
+	userBox     lipgloss.Style
+	aiLabel     lipgloss.Style
+	toolsLabel  lipgloss.Style
+	meta        lipgloss.Style
+	inputBox    lipgloss.Style
+	status      lipgloss.Style
+	placeholder lipgloss.Style
 }
 
 type turnFinishedMsg struct {
@@ -59,24 +75,35 @@ type sink struct {
 
 func New(runtime Runtime) Model {
 	input := textinput.New()
-	input.Placeholder = "输入你的任务，回车提交"
+	input.Placeholder = "Write or paste text here, then press Enter"
 	input.Focus()
 	input.CharLimit = 0
-	input.Prompt = "› "
+	input.Prompt = ""
 
 	return Model{
 		runtime: runtime,
 		session: &agent.Session{},
 		input:   input,
-		chat:    viewport.New(0, 0),
-		logs:    viewport.New(0, 0),
+		content: viewport.New(0, 0),
 		events:  make(chan tea.Msg, 128),
-		status:  "就绪",
+		status:  "Ready",
+		aiIndex: -1,
 		styles: styles{
-			header: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")),
-			panel:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
-			input:  lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1),
-			status: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
+			container: lipgloss.NewStyle().Padding(0, 1),
+			userLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")),
+			userBox: lipgloss.NewStyle().
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("255")).
+				Padding(0, 1),
+			aiLabel:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")),
+			toolsLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")),
+			meta:       lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
+			inputBox: lipgloss.NewStyle().
+				Background(lipgloss.Color("237")).
+				Foreground(lipgloss.Color("255")).
+				Padding(0, 1),
+			status:      lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
+			placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
 		},
 	}
 }
@@ -90,13 +117,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		chatHeight := max(8, msg.Height-10)
-		logHeight := max(4, msg.Height-chatHeight-6)
-		m.chat.Width = msg.Width - 4
-		m.chat.Height = chatHeight
-		m.logs.Width = msg.Width - 4
-		m.logs.Height = logHeight
-		m.refreshViews()
+		m.content.Width = max(20, msg.Width-2)
+		m.content.Height = max(8, msg.Height-6)
+		m.refreshView()
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
@@ -109,45 +132,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return m, nil
 			}
-			m.transcript = append(m.transcript, "你: "+text, "助手: ")
-			m.refreshViews()
+			m.startTurn(text)
 			m.input.SetValue("")
-			m.busy = true
-			m.status = "处理中"
 			return m, tea.Batch(m.waitForEvent(), m.runTurn(text))
 		}
 	case eventMsg:
-		switch msg.event.Type {
-		case agent.EventTextDelta:
-			m.appendAssistantDelta(msg.event.Text)
-		case agent.EventToolStart:
-			m.logLines = append(m.logLines, fmt.Sprintf("tool start: %s %s", msg.event.ToolName, msg.event.ToolInput))
-		case agent.EventToolEnd:
-			line := fmt.Sprintf("tool end: %s", msg.event.ToolName)
-			if msg.event.Err != nil {
-				line += " error=" + msg.event.Err.Error()
-			}
-			if strings.TrimSpace(msg.event.ToolOutput) != "" {
-				line += " output=" + msg.event.ToolOutput
-			}
-			m.logLines = append(m.logLines, line)
-		case agent.EventError:
-			m.logLines = append(m.logLines, "error: "+msg.event.Err.Error())
-			m.status = "错误"
-		case agent.EventDone:
-			m.status = "完成"
-		}
-		m.refreshViews()
+		m.handleEvent(msg.event)
+		m.refreshView()
 		return m, m.waitForEvent()
 	case turnFinishedMsg:
 		m.busy = false
 		if msg.err != nil {
-			m.status = "失败"
-			m.logLines = append(m.logLines, "turn failed: "+msg.err.Error())
-		} else if m.status != "错误" {
-			m.status = "就绪"
+			m.status = "Failed"
+			m.appendToolLine("turn failed: " + msg.err.Error())
+		} else if m.status != "Error" {
+			m.status = "Ready"
 		}
-		m.refreshViews()
+		m.aiIndex = -1
+		m.toolOpen = false
+		m.refreshView()
 		return m, nil
 	}
 
@@ -157,13 +160,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	header := m.styles.header.Render(appmeta.AppTitle)
-	chat := m.styles.panel.Width(max(20, m.width-2)).Render(m.chat.View())
-	logs := m.styles.panel.Width(max(20, m.width-2)).Render(m.logs.View())
-	input := m.styles.input.Width(max(20, m.width-2)).Render(m.input.View())
-	status := m.styles.status.Render("状态: " + m.status + "  |  Ctrl+C 退出")
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, chat, logs, input, status)
+	input := m.styles.inputBox.Width(max(20, m.width-2)).Render(m.input.View())
+	status := m.styles.status.Render("Status: " + m.status + "  |  Enter submit  |  Ctrl+C quit")
+	return lipgloss.JoinVertical(lipgloss.Left, m.styles.container.Render(m.content.View()), input, status)
 }
 
 func (m Model) runTurn(text string) tea.Cmd {
@@ -183,23 +182,108 @@ func (m Model) waitForEvent() tea.Cmd {
 	}
 }
 
-func (m *Model) refreshViews() {
-	m.chat.SetContent(strings.Join(m.transcript, "\n"))
-	start := 0
-	if len(m.logLines) > 20 {
-		start = len(m.logLines) - 20
+func (m *Model) startTurn(text string) {
+	m.blocks = append(m.blocks, block{kind: blockUser, text: text})
+	m.blocks = append(m.blocks, block{
+		kind: blockAI,
+		text: "",
+		meta: "input tokens: -  output tokens: -  cache: -  request id: -",
+	})
+	m.aiIndex = len(m.blocks) - 1
+	m.toolOpen = false
+	m.busy = true
+	m.status = "Streaming"
+	m.refreshView()
+}
+
+func (m *Model) handleEvent(event agent.Event) {
+	switch event.Type {
+	case agent.EventTextDelta:
+		m.appendAssistantDelta(event.Text)
+	case agent.EventToolStart:
+		m.status = "Running tools"
+		m.appendToolLine("calling " + event.ToolName + formatInlineSuffix(event.ToolInput))
+	case agent.EventToolEnd:
+		line := "finished " + event.ToolName
+		if event.Err != nil {
+			line += " error=" + event.Err.Error()
+			m.status = "Error"
+		} else {
+			m.status = "Streaming"
+		}
+		if output := strings.TrimSpace(event.ToolOutput); output != "" {
+			line += " output=" + output
+		}
+		m.appendToolLine(line)
+	case agent.EventError:
+		m.status = "Error"
+		m.appendToolLine("error: " + event.Err.Error())
+	case agent.EventDone:
+		m.status = "Done"
 	}
-	m.logs.SetContent(strings.Join(m.logLines[start:], "\n"))
-	m.chat.GotoBottom()
-	m.logs.GotoBottom()
+}
+
+func (m *Model) refreshView() {
+	lines := make([]string, 0, len(m.blocks)*3)
+	for _, item := range m.blocks {
+		switch item.kind {
+		case blockUser:
+			lines = append(lines,
+				m.styles.userLabel.Render("User:"),
+				m.styles.userBox.Width(max(20, m.width-4)).Render(item.text),
+			)
+		case blockAI:
+			body := item.text
+			if strings.TrimSpace(body) == "" && m.busy {
+				body = m.styles.placeholder.Render("...")
+			}
+			lines = append(lines,
+				m.styles.aiLabel.Render("AI:"),
+				body,
+			)
+			if strings.TrimSpace(item.meta) != "" {
+				lines = append(lines, m.styles.meta.Render(item.meta))
+			}
+		case blockTools:
+			lines = append(lines,
+				m.styles.toolsLabel.Render("AI-Tools:"),
+				item.text,
+			)
+		}
+		lines = append(lines, "")
+	}
+	m.content.SetContent(strings.TrimRight(strings.Join(lines, "\n"), "\n"))
+	m.content.GotoBottom()
 }
 
 func (m *Model) appendAssistantDelta(delta string) {
-	if len(m.transcript) == 0 {
-		m.transcript = append(m.transcript, "助手: "+delta)
+	if m.aiIndex < 0 || m.aiIndex >= len(m.blocks) {
+		m.blocks = append(m.blocks, block{
+			kind: blockAI,
+			text: delta,
+			meta: "input tokens: -  output tokens: -  cache: -  request id: -",
+		})
+		m.aiIndex = len(m.blocks) - 1
 		return
 	}
-	m.transcript[len(m.transcript)-1] += delta
+	m.blocks[m.aiIndex].text += delta
+}
+
+func (m *Model) appendToolLine(line string) {
+	if !m.toolOpen || len(m.blocks) == 0 || m.blocks[len(m.blocks)-1].kind != blockTools {
+		m.blocks = append(m.blocks, block{kind: blockTools, text: line})
+		m.toolOpen = true
+		return
+	}
+	m.blocks[len(m.blocks)-1].text += "\n" + line
+}
+
+func formatInlineSuffix(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return ": " + value
 }
 
 func (s sink) Emit(event agent.Event) {
