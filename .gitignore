@@ -1,0 +1,25 @@
+# Binaries
+sylastra
+gotui-agent
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+bin/
+dist/
+build/
+out/
+coverage.out
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
+
+# Local config and env
+.env
+.env.*
+.agents/
+.codex/
