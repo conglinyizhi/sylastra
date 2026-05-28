@@ -47,6 +47,47 @@ func TestApplyFirstRun(t *testing.T) {
 	}
 }
 
+func TestApplyFirstRunThirdPartyBaseURLFallback(t *testing.T) {
+	var seen []string
+	oldClient := probeHTTPClient
+	probeHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r.URL.String())
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") && strings.Contains(r.URL.String(), "/v1") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+				Header:     make(http.Header),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"not found"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	defer func() { probeHTTPClient = oldClient }()
+
+	dir := t.TempDir()
+	paths, err := config.ResolvePaths(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ApplyFirstRun(context.Background(), paths, "sk-test-123456789012345678901234567890,gpt-4o,https://token.memoh.net")
+	if err != nil {
+		t.Fatalf("ApplyFirstRun() error = %v", err)
+	}
+	var matched bool
+	for _, value := range seen {
+		if value == "https://token.memoh.net/v1/chat/completions" {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Fatalf("expected probe candidate https://token.memoh.net/v1/chat/completions, got %v", seen)
+	}
+}
+
 func TestApplyFastRunCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

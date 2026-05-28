@@ -40,6 +40,34 @@ func TestOpenAIChatGenerate(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatGenerateThirdPartyBaseURL(t *testing.T) {
+	profile := config.LLMProfile{
+		Name:     "demo",
+		APIStyle: config.APIStyleOpenAIChat,
+		BaseURL:  "https://token.memoh.net",
+		Model:    "test-model",
+		APIKey:   "secret",
+	}
+	modelImpl, err := Build(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	adapter := modelImpl.(*Adapter)
+	adapter.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://token.memoh.net/v1/chat/completions" {
+			t.Fatalf("unexpected url %s", r.URL.String())
+		}
+		return jsonResponse(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`), nil
+	})}
+	msg, err := modelImpl.Generate(context.Background(), []*schema.Message{schema.UserMessage("hi")})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if msg.Content != "ok" {
+		t.Fatalf("content = %q", msg.Content)
+	}
+}
+
 func TestOpenAIResponsesStream(t *testing.T) {
 	profile := config.LLMProfile{
 		Name:     "demo",

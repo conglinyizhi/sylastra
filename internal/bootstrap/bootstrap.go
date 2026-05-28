@@ -1,11 +1,14 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,39 +200,117 @@ func probeProfile(ctx context.Context, profile config.LLMProfile) error {
 	if err != nil {
 		return err
 	}
-	reqBody := map[string]any{}
-	switch profile.APIStyle {
-	case config.APIStyleAnthropicMessages:
-		reqBody = map[string]any{
-			"model":      profile.Model,
-			"max_tokens": 16,
-			"messages": []map[string]any{
-				{"role": "user", "content": []map[string]any{{"type": "text", "text": "Reply with exactly ok"}}},
-			},
+	candidates := probeCandidates(profile)
+	var failures []string
+	for _, candidate := range candidates {
+		err := executeProbeCandidate(ctx, profile, apiKey, candidate)
+		if err == nil {
+			return nil
 		}
-	default:
-		reqBody = map[string]any{
-			"model": profile.Model,
-			"messages": []map[string]any{
-				{"role": "user", "content": "Reply with exactly ok"},
+		failures = append(failures, fmt.Sprintf("%s %s: %v", candidate.Label, candidate.Endpoint, err))
+	}
+	return fmt.Errorf("connection test failed across %d probe candidates:\n- %s", len(failures), strings.Join(failures, "\n- "))
+}
+
+type probeCandidate struct {
+	Label    string
+	Endpoint string
+	Body     map[string]any
+}
+
+func probeCandidates(profile config.LLMProfile) []probeCandidate {
+	if profile.APIStyle == config.APIStyleAnthropicMessages {
+		return buildAnthropicProbeCandidates(profile)
+	}
+	return buildOpenAICompatibleProbeCandidates(profile)
+}
+
+func buildAnthropicProbeCandidates(profile config.LLMProfile) []probeCandidate {
+	baseVariants := baseURLVariants(profile.BaseURL)
+	body := map[string]any{
+		"model":      profile.Model,
+		"max_tokens": 16,
+		"messages": []map[string]any{
+			{"role": "user", "content": []map[string]any{{"type": "text", "text": "Reply with exactly ok"}}},
+		},
+	}
+	out := make([]probeCandidate, 0, len(baseVariants))
+	for _, endpoint := range baseVariants {
+		out = append(out, probeCandidate{
+			Label:    "anthropic-messages",
+			Endpoint: endpoint + "/messages",
+			Body:     body,
+		})
+	}
+	return out
+}
+
+func buildOpenAICompatibleProbeCandidates(profile config.LLMProfile) []probeCandidate {
+	baseVariants := baseURLVariants(profile.BaseURL)
+	chatBody := map[string]any{
+		"model": profile.Model,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Reply with exactly ok"},
+		},
+		"max_tokens": 16,
+	}
+	chatBodyNoMax := map[string]any{
+		"model": profile.Model,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Reply with exactly ok"},
+		},
+	}
+	responsesBody := map[string]any{
+		"model": profile.Model,
+		"input": []map[string]any{
+			{
+				"type": "message",
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Reply with exactly ok"},
+				},
 			},
-			"max_tokens": 16,
+		},
+		"max_output_tokens": 16,
+	}
+	var out []probeCandidate
+	for _, base := range baseVariants {
+		out = append(out,
+			probeCandidate{Label: "openai-chat", Endpoint: base + "/chat/completions", Body: chatBody},
+			probeCandidate{Label: "openai-chat-no-max", Endpoint: base + "/chat/completions", Body: chatBodyNoMax},
+			probeCandidate{Label: "openai-responses", Endpoint: base + "/responses", Body: responsesBody},
+		)
+	}
+	if profile.APIStyle == config.APIStyleOpenAIResponses {
+		rotateOpenAIResponsesFirst(out)
+	}
+	return out
+}
+
+func rotateOpenAIResponsesFirst(candidates []probeCandidate) {
+	if len(candidates) == 0 {
+		return
+	}
+	var reordered []probeCandidate
+	for _, candidate := range candidates {
+		if candidate.Label == "openai-responses" {
+			reordered = append(reordered, candidate)
 		}
 	}
-	endpoint := strings.TrimRight(profile.BaseURL, "/")
-	switch profile.APIStyle {
-	case config.APIStyleOpenAIChat:
-		endpoint += "/chat/completions"
-	case config.APIStyleOpenAIResponses:
-		endpoint += "/responses"
-	case config.APIStyleAnthropicMessages:
-		endpoint += "/messages"
+	for _, candidate := range candidates {
+		if candidate.Label != "openai-responses" {
+			reordered = append(reordered, candidate)
+		}
 	}
-	body, err := json.Marshal(reqBody)
+	copy(candidates, reordered)
+}
+
+func executeProbeCandidate(ctx context.Context, profile config.LLMProfile, apiKey string, candidate probeCandidate) error {
+	body, err := json.Marshal(candidate.Body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, candidate.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -243,13 +324,78 @@ func probeProfile(ctx context.Context, profile config.LLMProfile) error {
 	}
 	resp, err := probeHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("connection test failed: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("connection test failed: %s", resp.Status)
+		return formatProbeHTTPError(resp)
 	}
 	return nil
+}
+
+func formatProbeHTTPError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if trimmed := strings.TrimSpace(string(body)); trimmed != "" {
+		return fmt.Errorf("%s: %s", resp.Status, trimmed)
+	}
+	return fmt.Errorf("%s", resp.Status)
+}
+
+func baseURLVariants(raw string) []string {
+	normalized := normalizeBaseURL(raw)
+	seen := map[string]struct{}{}
+	var out []string
+	appendVariant := func(value string) {
+		value = strings.TrimRight(value, "/")
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	appendVariant(normalized)
+	if u, err := url.Parse(normalized); err == nil {
+		path := strings.TrimRight(u.Path, "/")
+		switch {
+		case strings.HasSuffix(path, "/chat/completions"):
+			u.Path = strings.TrimSuffix(path, "/chat/completions")
+			appendVariant(u.String())
+		case strings.HasSuffix(path, "/responses"):
+			u.Path = strings.TrimSuffix(path, "/responses")
+			appendVariant(u.String())
+		case strings.HasSuffix(path, "/messages"):
+			u.Path = strings.TrimSuffix(path, "/messages")
+			appendVariant(u.String())
+		}
+		path = strings.TrimRight(u.Path, "/")
+		if path == "" {
+			u.Path = "/v1"
+			appendVariant(u.String())
+		} else if !strings.HasSuffix(path, "/v1") {
+			u.Path = path + "/v1"
+			appendVariant(u.String())
+		}
+		if strings.HasSuffix(path, "/v1") {
+			u.Path = strings.TrimSuffix(path, "/v1")
+			appendVariant(u.String())
+		}
+	}
+	return out
+}
+
+func normalizeBaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimRight(raw, "/")
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	return "https://" + raw
 }
 
 func sanitizeName(name string) string {

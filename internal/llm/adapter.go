@@ -463,6 +463,7 @@ func consumeSSE(r io.Reader, handle func(eventType string, data []byte) error) e
 }
 
 func resolveEndpoint(baseURL, suffix string) string {
+	baseURL = normalizeEndpointBaseURL(baseURL)
 	if strings.HasSuffix(baseURL, suffix) {
 		return baseURL
 	}
@@ -470,8 +471,36 @@ func resolveEndpoint(baseURL, suffix string) string {
 	if err != nil {
 		return strings.TrimRight(baseURL, "/") + suffix
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + suffix
+	path := strings.TrimRight(u.Path, "/")
+	switch {
+	case strings.HasSuffix(path, "/chat/completions"):
+		path = strings.TrimSuffix(path, "/chat/completions")
+	case strings.HasSuffix(path, "/responses"):
+		path = strings.TrimSuffix(path, "/responses")
+	case strings.HasSuffix(path, "/messages"):
+		path = strings.TrimSuffix(path, "/messages")
+	}
+	if suffix == "/chat/completions" || suffix == "/responses" {
+		if path == "" {
+			path = "/v1"
+		} else if !strings.HasSuffix(path, "/v1") {
+			path += "/v1"
+		}
+	}
+	u.Path = path + suffix
 	return u.String()
+}
+
+func normalizeEndpointBaseURL(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	baseURL = strings.TrimRight(baseURL, "/")
+	if baseURL == "" {
+		return ""
+	}
+	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
+		return baseURL
+	}
+	return "https://" + baseURL
 }
 
 func chooseString(ptr *string, fallback string) string {
