@@ -151,9 +151,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		if msg.err != nil {
 			m.status = "Failed"
+			m.liveInfo = "request failed"
 			m.appendToolLine("turn failed: " + msg.err.Error())
 		} else if m.status != "Error" {
 			m.status = "Ready"
+			m.liveInfo = "idle"
 		}
 		m.aiIndex = -1
 		m.toolOpen = false
