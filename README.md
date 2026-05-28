@@ -22,6 +22,12 @@ Build the binary:
 go build -buildvcs=false ./cmd/sylastra
 ```
 
+Or use:
+
+```bash
+make build
+```
+
 Create example config files:
 
 ```bash
@@ -49,9 +55,17 @@ MCP command resolution order is:
 
 1. `mcp.command` from `app.toml`
 2. `~/.local/sylastra/mcp/bin/better-edit-tools` when fallback is enabled
-3. `better-edit-tools` from `PATH`
+3. a `better-edit-tools` command already referenced by another local agent config such as `codex`, `claude`, `opencode`, or `kimi`
+4. `better-edit-tools` from `PATH`
 
-Install the binary into `PATH`, place it under `~/.local/sylastra/mcp/bin/`, or replace `command` with an absolute path yourself.
+Install the binary into `PATH`, place it under `~/.local/sylastra/mcp/bin/`, point another local agent config at it, or replace `command` with an absolute path yourself.
+
+Check your local setup:
+
+```bash
+make doctor
+make mcp-path
+```
 
 Validate the config:
 
@@ -134,11 +148,13 @@ If the binary is not in `PATH`, use an absolute path instead.
 
 - `config init` writes example files only once. Use `--force` to overwrite them.
 - The manual GitHub Actions build publishes both a plain binary artifact and a bundled artifact that already includes `mcp/bin/better-edit-tools`.
+- The bundled artifact also includes `BUNDLE_INFO.txt` so you can see the embedded `better-edit-tools` version and original download source.
 - `--first-run` writes a usable Sylastra config from a compact input string and stores bootstrap metadata in `app.toml`.
 - `--first-run` stores API keys through environment variable names such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; it does not write the key inline to `llms.toml`.
 - `--fast-run` imports settings from `codex`, `claude`, `opencode`, or `kimi`, then writes the imported result into Sylastra's own config files.
 - `--fast-run` and `--first-run` currently replace the existing `profiles` list and active profile with the imported or detected one.
 - Set `[mcp.fallback].enabled = false` if you want to disable the built-in fallback lookup under `~/.local/sylastra/mcp/bin/`.
 - Sylastra does not auto-download MCP binaries. Install them explicitly so failure modes stay predictable.
+- For local builds, the intended fallback path is `~/.local/sylastra/mcp/bin/better-edit-tools`.
 - The TUI keeps one in-memory session only.
 - Prompt files are embedded from `prompts/zh/`.

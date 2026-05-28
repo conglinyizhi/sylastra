@@ -57,6 +57,25 @@ jobs:
           tar -xzf dist/download/${{ steps.better_edit_tools.outputs.archive }} -C dist/bundle/mcp/bin
           chmod +x dist/bundle/mcp/bin/better-edit-tools
 
+      - name: Write bundle metadata
+        run: |
+          cat > dist/bundle/BUNDLE_INFO.txt <<EOF
+          Sylastra bundle artifact
+
+          Included MCP binary:
+          - name: better-edit-tools
+          - source: https://github.com/conglinyizhi/better-edit-tools-mcp
+          - version: ${{ steps.better_edit_tools.outputs.tag }}
+          - archive: ${{ steps.better_edit_tools.outputs.archive }}
+
+          Local fallback location expected by Sylastra:
+          - ~/.local/sylastra/mcp/bin/better-edit-tools
+
+          Notes:
+          - The plain sylastra artifact does not include any MCP binary.
+          - You can also install or replace better-edit-tools manually.
+          EOF
+
       - name: Create bundle archive
         run: |
           mkdir -p dist/release
