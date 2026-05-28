@@ -98,3 +98,73 @@ func TestResolveMCPCommandFallback(t *testing.T) {
 		t.Fatalf("resolved command = %q", resolved.Command)
 	}
 }
+
+func TestResolveMCPCommandFromExternalAgentTOML(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	externalDir := filepath.Join(home, ".local", "share", "codex-tools", "bin")
+	if err := os.MkdirAll(externalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	externalBin := filepath.Join(externalDir, "better-edit-tools")
+	if err := os.WriteFile(externalBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte("[mcp]\ncommand = \""+externalBin+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := ResolvePaths(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := ResolveMCPCommand(paths, MCPConfig{
+		Fallback: MCPFallbackConfig{Enabled: true},
+	})
+	if resolved.Source != "agent:codex" {
+		t.Fatalf("resolved source = %q", resolved.Source)
+	}
+	if resolved.Command != externalBin {
+		t.Fatalf("resolved command = %q", resolved.Command)
+	}
+}
+
+func TestResolveMCPCommandFromExternalAgentJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	externalDir := filepath.Join(home, ".local", "share", "opencode-tools", "bin")
+	if err := os.MkdirAll(externalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	externalBin := filepath.Join(externalDir, "better-edit-tools")
+	if err := os.WriteFile(externalBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"mcp":{"servers":[{"command":"` + externalBin + `"}]}}`
+	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := ResolvePaths(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := ResolveMCPCommand(paths, MCPConfig{
+		Fallback: MCPFallbackConfig{Enabled: true},
+	})
+	if resolved.Source != "agent:opencode" {
+		t.Fatalf("resolved source = %q", resolved.Source)
+	}
+	if resolved.Command != externalBin {
+		t.Fatalf("resolved command = %q", resolved.Command)
+	}
+}

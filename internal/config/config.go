@@ -1,11 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -206,7 +208,7 @@ func ValidateProfiles(profiles []LLMProfile) error {
 
 func ValidateAppConfig(cfg AppConfig) error {
 	if strings.TrimSpace(cfg.MCP.Resolved.Command) == "" {
-		return errors.New("app.toml: no MCP command resolved; set mcp.command, install better-edit-tools into PATH, or place it under ~/.local/sylastra/mcp/bin/")
+		return errors.New("app.toml: no MCP command resolved; set mcp.command, install better-edit-tools into PATH, place it under ~/.local/sylastra/mcp/bin/, or configure another local agent to point at a usable better-edit-tools binary")
 	}
 	return nil
 }
@@ -226,6 +228,10 @@ func ResolveMCPCommand(paths Paths, cfg MCPConfig) MCPResolvedConfig {
 		}
 	}
 
+	if resolved, source, err := ResolveExternalAgentMCPCommand(); err == nil {
+		return MCPResolvedConfig{Command: resolved, Source: source}
+	}
+
 	if resolved, err := exec.LookPath("better-edit-tools"); err == nil {
 		return MCPResolvedConfig{Command: resolved, Source: "path"}
 	}
@@ -239,6 +245,150 @@ func DefaultFallbackMCPPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".local", "sylastra", "mcp", "bin", "better-edit-tools"), nil
+}
+
+func ResolveExternalAgentMCPCommand() (string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	sources := []struct {
+		Name string
+		Path string
+		Kind string
+	}{
+		{Name: "codex", Path: filepath.Join(home, ".codex", "config.toml"), Kind: "toml"},
+		{Name: "claude", Path: filepath.Join(home, ".claude", "claude.json"), Kind: "json"},
+		{Name: "opencode", Path: filepath.Join(home, ".config", "opencode", "opencode.json"), Kind: "json"},
+		{Name: "kimi", Path: filepath.Join(home, ".kimi", "config.toml"), Kind: "toml"},
+	}
+	for _, source := range sources {
+		command, err := resolveBetterEditToolsFromConfig(source.Path, source.Kind)
+		if err != nil || strings.TrimSpace(command) == "" {
+			continue
+		}
+		if resolved, err := lookPathOrExact(command); err == nil {
+			return resolved, "agent:" + source.Name, nil
+		}
+	}
+	return "", "", errors.New("not found")
+}
+
+func resolveBetterEditToolsFromConfig(path, kind string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	switch kind {
+	case "toml":
+		if command := extractBetterEditToolsFromTOML(data); command != "" {
+			return command, nil
+		}
+	case "json":
+		if command := extractBetterEditToolsFromJSON(data); command != "" {
+			return command, nil
+		}
+	}
+	if command := extractBetterEditToolsFromLooseText(string(data)); command != "" {
+		return command, nil
+	}
+	return "", errors.New("not found")
+}
+
+func extractBetterEditToolsFromTOML(data []byte) string {
+	var decoded any
+	if err := readTOMLBytes(data, &decoded); err == nil {
+		if command := findBetterEditToolsValue(decoded); command != "" {
+			return command
+		}
+	}
+	return extractBetterEditToolsFromLooseText(string(data))
+}
+
+func extractBetterEditToolsFromJSON(data []byte) string {
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err == nil {
+		if command := findBetterEditToolsValue(decoded); command != "" {
+			return command
+		}
+	}
+	return extractBetterEditToolsFromLooseText(string(data))
+}
+
+func findBetterEditToolsValue(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		if command := directBetterEditToolsValue(typed); command != "" {
+			return command
+		}
+		for _, child := range typed {
+			if command := findBetterEditToolsValue(child); command != "" {
+				return command
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if command := findBetterEditToolsValue(child); command != "" {
+				return command
+			}
+		}
+	}
+	return ""
+}
+
+func directBetterEditToolsValue(values map[string]any) string {
+	for key, value := range values {
+		if strings.ToLower(strings.TrimSpace(key)) != "command" {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if normalized := normalizeBetterEditToolsCommand(text); normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
+func extractBetterEditToolsFromLooseText(raw string) string {
+	matcher := regexp.MustCompile(`(?m)(~?/[^"'\\\s]*better-edit-tools|better-edit-tools)`)
+	for _, match := range matcher.FindAllString(raw, -1) {
+		if normalized := normalizeBetterEditToolsCommand(match); normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
+func normalizeBetterEditToolsCommand(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, `"'`)
+	if raw == "" {
+		return ""
+	}
+	base := filepath.Base(raw)
+	if base != "better-edit-tools" && raw != "better-edit-tools" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(home, strings.TrimPrefix(raw, "~/"))
+	}
+	return raw
+}
+
+func readTOMLBytes(data []byte, out any) error {
+	v := viper.New()
+	v.SetConfigType("toml")
+	if err := v.ReadConfig(strings.NewReader(string(data))); err != nil {
+		return err
+	}
+	return v.Unmarshal(out)
 }
 
 func lookPathOrExact(command string) (string, error) {
