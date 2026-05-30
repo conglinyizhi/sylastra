@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -69,6 +70,7 @@ func newConfigCmd() *cobra.Command {
 	cmd.AddCommand(newConfigInitCmd())
 	cmd.AddCommand(newConfigValidateCmd())
 	cmd.AddCommand(newConfigShowActiveCmd())
+	cmd.AddCommand(newConfigInstallMCPCmd())
 
 	return cmd
 }
@@ -108,15 +110,27 @@ func newConfigInitCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Imported %q -> active profile: %s (%s)\n",
 					fastRun, result.Profile.Name, result.Profile.Model)
 
-			default:
-				if err := writeExampleConfig(paths, force); err != nil {
-					return err
-				}
-				fmt.Fprintf(os.Stderr, "Example config files created in %s\n", paths.Dir)
-				fmt.Fprintf(os.Stderr, "Edit llms.toml to add your LLM profile, then run 'sylastra tui run'\n")
+		default:
+			if err := writeExampleConfig(paths, force); err != nil {
+				return err
 			}
+			fmt.Fprintf(os.Stderr, "Example config files created in %s\n", paths.Dir)
+			fmt.Fprintln(os.Stderr, "Edit llms.toml to add your LLM profile, then run 'sylastra tui run'")
 
-			return nil
+			// Check if MCP is available and suggest install-mcp
+			mcpPath, mcpErr := config.DefaultFallbackMCPPath()
+			if mcpErr == nil {
+				if info, statErr := os.Stat(mcpPath); statErr != nil || info.IsDir() {
+					if _, lookErr := exec.LookPath("better-edit-tools"); lookErr != nil {
+						fmt.Fprintln(os.Stderr)
+						fmt.Fprintln(os.Stderr, "MCP server not found. Install it with:")
+						fmt.Fprintln(os.Stderr, "  sylastra config install-mcp")
+					}
+				}
+			}
+		}
+
+		return nil
 		},
 	}
 
@@ -215,6 +229,29 @@ func newConfigShowActiveCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newConfigInstallMCPCmd() *cobra.Command {
+	var force bool
+	c := &cobra.Command{
+		Use:   "install-mcp",
+		Short: "Download and install the better-edit-tools MCP server",
+		Long: `Downloads the latest better-edit-tools-mcp release from GitHub
+and installs it to the local fallback path (~/.local/sylastra/mcp/bin/).
+
+If the binary is already installed, use --force to re-download.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx := context.Background()
+			path, err := bootstrap.EnsureMCP(ctx, force)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "MCP server ready: %s\n", path)
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&force, "force", false, "Re-download even if already installed")
+	return c
 }
 
 func maskKey(key, env string) string {
