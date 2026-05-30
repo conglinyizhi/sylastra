@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -658,12 +659,18 @@ func importOpenCode() (importResult, error) {
 		return importResult{}, err
 	}
 
-	// Iterate all providers, pick the first one with an apiKey
-	for providerName, prov := range raw.Provider {
-		if prov.Options.APIKey == "" {
-			continue
+	// Collect provider names, sort for deterministic ordering
+	var names []string
+	for name, prov := range raw.Provider {
+		if prov.Options.APIKey != "" {
+			names = append(names, name)
 		}
+	}
+	sort.Strings(names)
 
+	// Use the first (alphabetically) provider with an apiKey
+	for _, providerName := range names {
+		prov := raw.Provider[providerName]
 		apiKey := prov.Options.APIKey
 		baseURL := prov.Options.BaseURL
 		modelName := detectOpenCodeModel(prov.Models, providerName)
@@ -691,15 +698,24 @@ func importOpenCode() (importResult, error) {
 func detectOpenCodeModel(models map[string]struct {
 	Name string `json:"name"`
 }, _ string) string {
-	// Prefer the Name field of any model entry
-	for _, m := range models {
+	// Collect model IDs, sort for deterministic ordering
+	var ids []string
+	for id := range models {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	// Prefer the Name field of the first model entry
+	for _, id := range ids {
+		m := models[id]
 		if m.Name != "" {
 			return m.Name
 		}
 	}
-	// Fall back to the first key (model ID)
-	for modelID := range models {
-		return modelID
+
+	// Fall back to the first model ID
+	if len(ids) > 0 {
+		return ids[0]
 	}
 	return ""
 }
