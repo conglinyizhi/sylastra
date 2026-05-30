@@ -22,6 +22,8 @@ const (
 	EventToolEnd   EventType = "tool_end"
 	EventError     EventType = "error"
 	EventDone      EventType = "done"
+	EventNetworkStep EventType = "network_step"   // 新增: 网络请求状态
+	EventTokenUsage  EventType = "token_usage"    // 新增: token 用量信息
 )
 
 type Event struct {
@@ -30,6 +32,10 @@ type Event struct {
 	Status     string
 	ToolName   string
 	ToolInput  string
+	TokenInput   int    `json:"token_input,omitempty"`
+	TokenOutput  int    `json:"token_output,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	NetworkState string `json:"network_state,omitempty"`    // connecting/connected/error
 	ToolOutput string
 	Err        error
 }
