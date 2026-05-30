@@ -40,6 +40,16 @@ It runs with:
   - one MCP server over stdio`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Help()
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "Quick start: create an initial config with a single command")
+			fmt.Fprintln(os.Stderr, "  sylastra config init --first-run \"<api_key>,<model>[,<base_url>]\"")
+			fmt.Fprintln(os.Stderr, "  sylastra config init --fast-run codex|claude|opencode|kimi")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "Or run interactively:")
+			fmt.Fprintln(os.Stderr, "  sylastra tui run")
+		},
 	}
 
 	root.AddCommand(newConfigCmd())

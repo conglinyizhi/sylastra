@@ -187,9 +187,13 @@ func persist(paths config.Paths, result *Result) error {
 	if err := exportAPIKey(result.Profile); err != nil {
 		return err
 	}
-	if err := config.WriteLLMFiles(paths, []config.LLMProfile{result.Profile}, result.Profile.Name); err != nil {
+
+	// Merge new profile into existing profiles list (append, not replace)
+	profiles := mergeProfiles(paths.LLMs, result.Profile)
+	if err := config.WriteLLMFiles(paths, profiles, result.Profile.Name); err != nil {
 		return err
 	}
+
 	appCfg, err := config.LoadAppLoose(paths.App)
 	if err != nil {
 		return err
@@ -199,9 +203,28 @@ func persist(paths config.Paths, result *Result) error {
 		LastSource:   result.Source,
 		LastProfile:  result.Profile.Name,
 		ConfiguredAt: result.Configured.Format(time.RFC3339),
-		ReplacedAll:  true,
+		ReplacedAll:  false,
 	}
 	return config.WriteAppFile(paths.App, appCfg)
+}
+
+func mergeProfiles(llmsPath string, newProfile config.LLMProfile) []config.LLMProfile {
+	existing, err := config.LoadProfiles(llmsPath)
+	if err != nil {
+		// llms.toml doesn't exist or is empty — start fresh
+		return []config.LLMProfile{newProfile}
+	}
+
+	// Check if a profile with the same name already exists
+	for i, p := range existing {
+		if p.Name == newProfile.Name {
+			existing[i] = newProfile
+			return existing
+		}
+	}
+
+	// Append new profile
+	return append(existing, newProfile)
 }
 
 func probeProfile(ctx context.Context, profile config.LLMProfile, report func(string)) error {
