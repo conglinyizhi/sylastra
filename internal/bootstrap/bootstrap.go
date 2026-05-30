@@ -509,16 +509,19 @@ func importSource(source string) (config.LLMProfile, error) {
 	if err != nil {
 		return config.LLMProfile{}, err
 	}
-	return config.LLMProfile{
+	profile := config.LLMProfile{
 		Name:        sanitizeName(result.Model),
 		DisplayName: result.Model,
 		APIStyle:    result.APIStyle,
 		BaseURL:     result.BaseURL,
 		Model:       result.Model,
+		APIKey:      result.APIKey,
 		APIKeyEnv:   defaultAPIKeyEnv(result.APIStyle),
 		Timeout:     120,
 		MaxTokens:   2048,
-	}, nil
+	}
+
+	return profile, nil
 }
 
 func defaultAPIKeyEnv(apiStyle string) string {

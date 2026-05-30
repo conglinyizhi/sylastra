@@ -109,6 +109,11 @@ func newConfigInitCmd() *cobra.Command {
 				}
 				fmt.Fprintf(os.Stderr, "Imported %q -> active profile: %s (%s)\n",
 					fastRun, result.Profile.Name, result.Profile.Model)
+				if result.Profile.APIKey != "" {
+					fmt.Fprintf(os.Stderr, "  API key imported (stored in llms.toml)\n")
+				} else if result.Profile.APIKeyEnv != "" {
+					fmt.Fprintf(os.Stderr, "  Set %s to use this profile\n", result.Profile.APIKeyEnv)
+				}
 
 		default:
 			if err := writeExampleConfig(paths, force); err != nil {
