@@ -639,6 +639,101 @@ func importOpenCode() (importResult, error) {
 	if err != nil {
 		return importResult{}, fmt.Errorf("opencode config not found: %w", err)
 	}
+
+	// Parse with the modern flexible provider map structure
+	var raw struct {
+		Provider map[string]struct {
+			Name    string `json:"name"`
+			NPM     string `json:"npm"`
+			Options struct {
+				BaseURL string `json:"baseURL"`
+				APIKey  string `json:"apiKey"`
+			} `json:"options"`
+			Models  map[string]struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return importResult{}, err
+	}
+
+	// Iterate all providers, pick the first one with an apiKey
+	for providerName, prov := range raw.Provider {
+		if prov.Options.APIKey == "" {
+			continue
+		}
+
+		apiKey := prov.Options.APIKey
+		baseURL := prov.Options.BaseURL
+		modelName := detectOpenCodeModel(prov.Models, providerName)
+		apiStyle := detectOpenCodeStyle(providerName, prov.NPM, baseURL)
+
+		if baseURL == "" {
+			baseURL = defaultBaseURLForStyle(apiStyle)
+		}
+		if modelName == "" {
+			modelName = defaultModelForStyle(apiStyle)
+		}
+
+		return importResult{
+			APIKey:   apiKey,
+			BaseURL:  baseURL,
+			Model:    modelName,
+			APIStyle: apiStyle,
+		}, nil
+	}
+
+	// Fallback: try the old rigid provider-name lookup
+	return importOpenCodeLegacy(data)
+}
+
+func detectOpenCodeModel(models map[string]struct {
+	Name string `json:"name"`
+}, _ string) string {
+	// Prefer the Name field of any model entry
+	for _, m := range models {
+		if m.Name != "" {
+			return m.Name
+		}
+	}
+	// Fall back to the first key (model ID)
+	for modelID := range models {
+		return modelID
+	}
+	return ""
+}
+
+func detectOpenCodeStyle(providerName, npm, baseURL string) string {
+	for _, s := range []string{providerName, npm, baseURL} {
+		lower := strings.ToLower(s)
+		if strings.Contains(lower, "anthropic") {
+			return config.APIStyleAnthropicMessages
+		}
+	}
+	return config.APIStyleOpenAIChat
+}
+
+func defaultBaseURLForStyle(apiStyle string) string {
+	switch apiStyle {
+	case config.APIStyleAnthropicMessages:
+		return "https://api.anthropic.com/v1"
+	default:
+		return "https://api.openai.com/v1"
+	}
+}
+
+func defaultModelForStyle(apiStyle string) string {
+	switch apiStyle {
+	case config.APIStyleAnthropicMessages:
+		return "claude-sonnet-4-20250514"
+	default:
+		return "gpt-4o"
+	}
+}
+
+// importOpenCodeLegacy handles the old rigid provider structure.
+func importOpenCodeLegacy(data []byte) (importResult, error) {
 	var cfg struct {
 		Provider struct {
 			OpenAI *struct {
