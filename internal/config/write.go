@@ -109,7 +109,20 @@ type mcpFallbackConfigWrite struct {
 }
 
 type uiConfigWrite struct {
-	Theme string `toml:"theme,omitempty"`
+	Theme  string               `toml:"theme,omitempty"`
+	Prefix prefixUIConfigWrite  `toml:"prefix,omitempty"`
+}
+
+	type prefixUIConfigWrite struct {
+	User         prefixEntryWrite `toml:"user,omitempty"`
+	AIThink      prefixEntryWrite `toml:"ai_think,omitempty"`
+	AIToolUse    prefixEntryWrite `toml:"ai_tool_use,omitempty"`
+	PCToolReturn prefixEntryWrite `toml:"pc_tool_return,omitempty"`
+}
+
+	type prefixEntryWrite struct {
+	Text  string `toml:"text,omitempty"`
+	Color string `toml:"color,omitempty"`
 }
 
 type bootstrapConfigWrite struct {
@@ -148,6 +161,12 @@ func toAppConfigWrite(cfg AppConfig) appConfigWrite {
 		},
 		UI: uiConfigWrite{
 			Theme: cfg.UI.Theme,
+			Prefix: prefixUIConfigWrite{
+				User:         toPrefixEntryWrite(cfg.UI.Prefix.User),
+				AIThink:      toPrefixEntryWrite(cfg.UI.Prefix.AIThink),
+				AIToolUse:    toPrefixEntryWrite(cfg.UI.Prefix.AIToolUse),
+				PCToolReturn: toPrefixEntryWrite(cfg.UI.Prefix.PCToolReturn),
+			},
 		},
 		Bootstrap: bootstrapConfigWrite{
 			LastMode:     cfg.Bootstrap.LastMode,
@@ -157,4 +176,8 @@ func toAppConfigWrite(cfg AppConfig) appConfigWrite {
 			ReplacedAll:  cfg.Bootstrap.ReplacedAll,
 		},
 	}
+}
+
+func toPrefixEntryWrite(e PrefixEntryUIConfig) prefixEntryWrite {
+	return prefixEntryWrite{Text: e.Text, Color: e.Color}
 }

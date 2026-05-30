@@ -65,7 +65,21 @@ type MCPResolvedConfig struct {
 }
 
 type UIConfig struct {
-	Theme string `mapstructure:"theme"`
+	Theme  string           `mapstructure:"theme"`
+	Prefix PrefixUIConfig   `mapstructure:"prefix"`
+}
+
+// PrefixUIConfig maps to tui.PrefixConfig for customizable message prefixes.
+type PrefixUIConfig struct {
+	User         PrefixEntryUIConfig `mapstructure:"user"`
+	AIThink      PrefixEntryUIConfig `mapstructure:"ai_think"`
+	AIToolUse    PrefixEntryUIConfig `mapstructure:"ai_tool_use"`
+	PCToolReturn PrefixEntryUIConfig `mapstructure:"pc_tool_return"`
+}
+
+type PrefixEntryUIConfig struct {
+	Text  string `mapstructure:"text"`
+	Color string `mapstructure:"color"`
 }
 
 type BootstrapConfig struct {
