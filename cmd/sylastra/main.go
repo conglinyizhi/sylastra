@@ -135,6 +135,21 @@ func writeExampleConfig(paths config.Paths, force bool) error {
 		return err
 	}
 
+	// Write example llms.toml + llm.index.toml with a placeholder profile
+	exampleProfile := config.LLMProfile{
+		Name:        "example-openai",
+		DisplayName: "Example OpenAI",
+		APIStyle:    config.APIStyleOpenAIChat,
+		BaseURL:     "https://api.openai.com/v1",
+		Model:       "gpt-4.1-mini",
+		APIKeyEnv:   "OPENAI_API_KEY",
+		Timeout:     120,
+		MaxTokens:   2048,
+	}
+	if err := config.WriteLLMFiles(paths, []config.LLMProfile{exampleProfile}, "example-openai"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -164,16 +179,28 @@ func newConfigShowActiveCmd() *cobra.Command {
 		Use:   "show-active",
 		Short: "Show the active LLM profile",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			loaded, err := config.Load("")
+			paths, err := config.ResolvePaths("")
+			if err != nil {
+				return err
+			}
+			profiles, err := config.LoadProfiles(paths.LLMs)
+			if err != nil {
+				return fmt.Errorf("load profiles: %w", err)
+			}
+			index, err := config.LoadIndex(paths.LLMIndex)
+			if err != nil {
+				return fmt.Errorf("load index: %w", err)
+			}
+			active, err := config.SelectActiveProfile(profiles, index.Active)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Active profile: %s\n", loaded.ActiveProfile.Name)
-			fmt.Printf("  API style : %s\n", loaded.ActiveProfile.APIStyle)
-			fmt.Printf("  Base URL  : %s\n", loaded.ActiveProfile.BaseURL)
-			fmt.Printf("  Model     : %s\n", loaded.ActiveProfile.Model)
-			fmt.Printf("  API key   : %s\n", maskKey(loaded.ActiveProfile.APIKey, loaded.ActiveProfile.APIKeyEnv))
+			fmt.Printf("Active profile: %s\n", active.Name)
+			fmt.Printf("  API style : %s\n", active.APIStyle)
+			fmt.Printf("  Base URL  : %s\n", active.BaseURL)
+			fmt.Printf("  Model     : %s\n", active.Model)
+			fmt.Printf("  API key   : %s\n", maskKey(active.APIKey, active.APIKeyEnv))
 
 			return nil
 		},
