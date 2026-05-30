@@ -691,8 +691,8 @@ func importOpenCode() (importResult, error) {
 		}, nil
 	}
 
-	// Fallback: try the old rigid provider-name lookup
-	return importOpenCodeLegacy(data)
+	// No provider with apiKey found
+	return importResult{}, errors.New("no usable api key found in opencode config")
 }
 
 func detectOpenCodeModel(models map[string]struct {
@@ -748,69 +748,6 @@ func defaultModelForStyle(apiStyle string) string {
 	}
 }
 
-// importOpenCodeLegacy handles the old rigid provider structure.
-func importOpenCodeLegacy(data []byte) (importResult, error) {
-	var cfg struct {
-		Provider struct {
-			OpenAI *struct {
-				Options struct {
-					BaseURL string `json:"baseURL"`
-					APIKey  string `json:"apiKey"`
-				} `json:"options"`
-			} `json:"openai"`
-			Anthropic *struct {
-				Options struct {
-					BaseURL string `json:"baseURL"`
-					APIKey  string `json:"apiKey"`
-				} `json:"options"`
-			} `json:"anthropic"`
-			DeepSeek *struct {
-				Options struct {
-					BaseURL string `json:"baseURL"`
-					APIKey  string `json:"apiKey"`
-				} `json:"options"`
-			} `json:"deepseek"`
-			Custom *struct {
-				Options struct {
-					BaseURL string `json:"baseURL"`
-					APIKey  string `json:"apiKey"`
-				} `json:"options"`
-			} `json:"custom"`
-		} `json:"provider"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return importResult{}, err
-	}
-	if cfg.Provider.OpenAI != nil && cfg.Provider.OpenAI.Options.APIKey != "" {
-		baseURL := cfg.Provider.OpenAI.Options.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		return importResult{APIKey: cfg.Provider.OpenAI.Options.APIKey, BaseURL: baseURL, Model: "gpt-4o", APIStyle: config.APIStyleOpenAIChat}, nil
-	}
-	if cfg.Provider.Anthropic != nil && cfg.Provider.Anthropic.Options.APIKey != "" {
-		baseURL := cfg.Provider.Anthropic.Options.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.anthropic.com/v1"
-		}
-		return importResult{APIKey: cfg.Provider.Anthropic.Options.APIKey, BaseURL: baseURL, Model: "claude-sonnet-4-20250514", APIStyle: config.APIStyleAnthropicMessages}, nil
-	}
-	if cfg.Provider.DeepSeek != nil && cfg.Provider.DeepSeek.Options.APIKey != "" {
-		baseURL := cfg.Provider.DeepSeek.Options.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.deepseek.com/v1"
-		}
-		return importResult{APIKey: cfg.Provider.DeepSeek.Options.APIKey, BaseURL: baseURL, Model: "deepseek-chat", APIStyle: config.APIStyleOpenAIChat}, nil
-	}
-	if cfg.Provider.Custom != nil && cfg.Provider.Custom.Options.APIKey != "" {
-		baseURL := cfg.Provider.Custom.Options.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		return importResult{APIKey: cfg.Provider.Custom.Options.APIKey, BaseURL: baseURL, Model: "custom-model", APIStyle: config.APIStyleOpenAIChat}, nil
-	}
-	return importResult{}, errors.New("no usable api key found in opencode config")
-}
 
 func importKimi() (importResult, error) {
 	home, err := os.UserHomeDir()
