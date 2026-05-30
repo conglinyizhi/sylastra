@@ -1,5 +1,5 @@
 # Binaries
-sylastra
+/sylastra
 gotui-agent
 *.exe
 *.dll
@@ -22,4 +22,7 @@ coverage.out
 .env
 .env.*
 .agents/
+
+# Sisyphus workflow state
+/.sisyphus/
 .codex/
